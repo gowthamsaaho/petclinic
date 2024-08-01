@@ -1,0 +1,117 @@
+pipeline {
+    agent {label 'red'}
+    tools{
+        jdk 'java17'
+        maven 'maven3'
+    }
+    environment{
+          SCANNER_HOME= tool 'sonar'
+          SONAR_HOST_URL = 'http://3.84.40.66:9000/'
+          SONAR_AUTH_TOKEN = 'squ_680857fb55df100b9151f925c1288b801fb20049'
+    }
+
+    stages {
+        stage('git checkout'){
+            steps {
+                //git branch: 'main', changelog: false, credentialsId: 'ubuntu', poll: false, url: 'https://github.com/gowthamsaaho/petclinic.git'
+                 git branch: 'main', credentialsId: 'Globalkeypair', url: 'https://github.com/gowthamsaaho/petclinic.git'
+            }
+        }
+        
+        stage('compile'){
+            steps {
+                sh " mvn clean compile -DskipTests=true" 
+            }
+        }
+        
+        stage('test cases'){
+            steps {
+                sh "mvn clean test " 
+            }
+        }
+        
+         
+        stage('sonarqube-scanner'){
+            steps {
+                withSonarQubeEnv('sonar'){
+                     sh '''  
+                            $SCANNER_HOME/bin/sonar-scanner \
+                           -Dsonar.projectKey=petclinic \
+                           -Dsonar.projectName=petclinic \
+                           -Dsonar.sources=. \
+                           -Dsonar.java.binaries=./target/classes \
+                           -Dsonar.host.url=$SONAR_HOST_URL \
+                           -Dsonar.login=$SONAR_AUTH_TOKEN
+                      '''
+                }
+                 
+            }
+        }
+        stage('OWASP Scan') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'Dp'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('build our application'){
+            steps {
+                sh "mvn clean install"
+            }
+        }
+        
+        stage('docker tag build push'){
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'dkrhubmaincreds'){
+                      sh '''
+                             echo 26August2001 | docker login --username gowtham4321 --password-stdin
+                             docker info
+                             docker build -t gowtham4321/petclinic:Pet1 .
+                             docker tag  gowtham4321/petclinic:Pet1 gowtham4321/petclinic:pet
+                             docker push gowtham4321/petclinic:pet
+                             
+                         '''
+                    }
+                }
+            }
+        }
+        
+        stage('Trivy scan'){
+            steps {
+                sh "trivy image --scanners vuln gowtham4321/petclinic:pet"
+                // sh "timeout 60 trivy image gowtham4321/petclinic:pet"
+            }
+        }
+    } 
+    
+    post {
+        always {
+            emailext (
+                to: 'gowthamsawang88@gmail.com',
+                subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.result}",
+                body: """
+                Job: ${env.JOB_NAME} 
+                Build Number: ${env.BUILD_NUMBER}
+                Status: ${currentBuild.result}
+                See details at: ${env.BUILD_URL}
+                """
+            )
+        }
+        
+        failure {
+            emailext (
+                to: 'gowthamsawang88@gmail.com',
+                subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILED",
+                body: """
+                Job: ${env.JOB_NAME} 
+                Build Number: ${env.BUILD_NUMBER}
+                Status: ${currentBuild.result}
+                See details at: ${env.BUILD_URL}
+                """
+            )
+        }
+    
+    }
+}    
+        
